@@ -40,13 +40,14 @@ export default function RootLayout({
         "font-sans"
       )}
     >
-      <body className="min-h-full flex flex-col bg-neutral-950 text-white">
-        
-        {/* 🔥 Auth Provider (VERY IMPORTANT) */}
+      {/* ✅ LOCK viewport */}
+      <body className="h-screen w-screen overflow-hidden bg-neutral-950 text-white">
         <AuthProvider>
-          {children}
+          {/* ✅ children take full space */}
+          <div className="h-full w-full">
+            {children}
+          </div>
         </AuthProvider>
-
       </body>
     </html>
   );

@@ -1,38 +1,114 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "@/lib/supabase";
+import ChartRenderer from "@/components/ChartRenderer";
+
+// ✅ shadcn imports
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSend = () => {
-    if (!input) return;
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
-    const newMessage = {
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || loading) return;
+
+    const userMessage = {
       role: "user",
       content: input,
     };
 
-    const fakeResponse = {
-      role: "assistant",
-      data: {
-        insight: "Revenue increased by 18% last week.",
-        sql: "SELECT SUM(revenue) FROM orders;",
-        reasoning: "Used revenue column from orders table...",
-        data: [{ revenue: 12000 }],
-        confidence: "HIGH",
-      },
-    };
-
-    setMessages((prev) => [...prev, newMessage, fakeResponse]);
+    setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    setLoading(true);
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      const session_id = data.session?.user?.id || "guest";
+
+      const res = await fetch("http://localhost:8000/api/query", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: userMessage.content,
+          session_id,
+        }),
+      });
+
+      const dataRes = await res.json();
+
+      let chart = null;
+
+      try {
+        if (dataRes.sql) {
+          const vizRes = await fetch("http://localhost:8000/api/visualize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              sql: dataRes.sql,
+            }),
+          });
+
+          chart = await vizRes.json();
+        }
+      } catch {
+        console.log("Chart failed");
+      }
+
+      const botMessage = {
+        role: "assistant",
+        data: {
+          insight: dataRes.insight,
+          sql: dataRes.sql,
+          reasoning: dataRes.reasoning,
+          data: dataRes.rows,
+          confidence: dataRes.confidence,
+          chart,
+        },
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+
+    } catch (err) {
+      console.error(err);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          data: {
+            insight: "⚠️ Error connecting to backend",
+            sql: "",
+            reasoning: "",
+            data: [],
+            confidence: "LOW",
+            chart: null,
+          },
+        },
+      ]);
+    }
+
+    setLoading(false);
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)]">
-      
-      {/* Messages */}
+    <div className="flex flex-col h-full">
+
+      {/* 🧠 Messages */}
       <div className="flex-1 overflow-y-auto space-y-6 p-4">
 
         {messages.length === 0 && (
@@ -45,7 +121,7 @@ export default function ChatPage() {
           <div key={i}>
             {msg.role === "user" ? (
               <div className="flex justify-end">
-                <div className="bg-white text-black px-4 py-2 rounded-xl max-w-md">
+                <div className="bg-white/90 text-black px-4 py-2 rounded-xl max-w-md shadow">
                   {msg.content}
                 </div>
               </div>
@@ -55,72 +131,98 @@ export default function ChatPage() {
           </div>
         ))}
 
+        {loading && (
+          <div className="text-neutral-400 text-sm">
+            Thinking...
+          </div>
+        )}
+
+        <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="border-t border-neutral-800 p-4 flex gap-2">
-        <input
+      {/* 💬 Input */}
+      <div className="border-t border-white/10 p-4 flex gap-2 bg-neutral-900/50 backdrop-blur-md">
+
+        <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a question..."
-          className="flex-1 px-4 py-3 rounded-xl bg-neutral-800 border border-neutral-700 outline-none"
+          onKeyDown={(e) => e.key === "Enter" && handleSend()}
+          className="bg-neutral-800 border-neutral-700"
         />
 
-        <button
+        <Button
           onClick={handleSend}
-          className="bg-white text-black px-6 rounded-xl"
+          disabled={loading}
+          className="bg-white text-black hover:bg-neutral-200"
         >
           Send
-        </button>
+        </Button>
+
       </div>
     </div>
   );
 }
 
+
 function ResponseCard({ data }: any) {
   const [tab, setTab] = useState("insight");
 
   return (
-    <div className="border border-neutral-800 rounded-2xl p-4 bg-neutral-900 max-w-2xl">
+    <Card className="bg-white/5 border-white/10 backdrop-blur-md max-w-2xl transition hover:bg-white/10">
+      <CardContent className="p-4">
 
-      {/* Tabs */}
-      <div className="flex gap-4 mb-4 text-sm">
-        {["insight", "sql", "reasoning", "data"].map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`capitalize ${
-              tab === t ? "text-white" : "text-neutral-400"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+        {/* Tabs */}
+        <div className="flex gap-4 mb-4 text-sm">
+          {["insight", "sql", "reasoning", "data", "chart"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`capitalize ${
+                tab === t ? "text-white" : "text-neutral-400"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
 
-      {/* Content */}
-      <div className="text-sm text-neutral-300">
-        {tab === "insight" && <p>{data.insight}</p>}
+        {/* Content */}
+        <div className="text-sm text-neutral-300">
 
-        {tab === "sql" && (
-          <pre className="bg-black p-3 rounded-lg overflow-x-auto text-green-400">
-            {data.sql}
-          </pre>
-        )}
+          {tab === "insight" && <p>{data.insight}</p>}
 
-        {tab === "reasoning" && <p>{data.reasoning}</p>}
+          {tab === "sql" && (
+            <pre className="bg-black p-3 rounded-lg overflow-x-auto text-green-400">
+              {data.sql}
+            </pre>
+          )}
 
-        {tab === "data" && (
-          <pre className="bg-black p-3 rounded-lg overflow-x-auto">
-            {JSON.stringify(data.data, null, 2)}
-          </pre>
-        )}
-      </div>
+          {tab === "reasoning" && <p>{data.reasoning}</p>}
 
-      {/* Confidence */}
-      <div className="mt-4 text-xs text-green-400">
-        Confidence: {data.confidence}
-      </div>
-    </div>
+          {tab === "data" && (
+            <pre className="bg-black p-3 rounded-lg overflow-x-auto">
+              {JSON.stringify(data.data, null, 2)}
+            </pre>
+          )}
+
+          {tab === "chart" && data.chart && (
+            <ChartRenderer
+              data={data.chart.rows}
+              recommendation={data.chart.recommendation}
+            />
+          )}
+
+          {tab === "chart" && !data.chart && (
+            <p className="text-neutral-500">No chart available</p>
+          )}
+        </div>
+
+        <div className="mt-4 text-xs text-green-400">
+          Confidence: {data.confidence}
+        </div>
+
+      </CardContent>
+    </Card>
   );
 }
